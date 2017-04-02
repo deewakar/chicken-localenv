@@ -1,0 +1,96 @@
+#!/bin/bash 
+
+if [ -z "${1}" ]; then
+    echo 'Usage: localenv DIR'
+    echo
+    echo 'localenv: You must provide the name of the directory to install the chicken environment.'
+    exit 1
+elif [ -e "$(pwd)/${1}" ]; then
+    echo 'localenv: file or directory already exists.'
+    exit 1
+fi
+
+# check if chicken is installed and save the location of csi and chicken-install.
+CSI=$(command -v csi)
+
+if [ -z "${CSI}" ]; then
+    echo 'CHICKEN is not installed!'
+    exit 1
+else
+    echo "CHICKEN interpreter is at ${CSI}"
+fi
+
+CHICKEN_INSTALL=$(command -v chicken-install)
+
+# obtain global CHICKEN_HOME, CHICKEN_PREFIX, CHICKEN_REPOSITORY paths
+CHICKEN_HOME=$(${CSI} -p "(chicken-home)")
+#CHICKEN_PREFIX=$(dirname "$(dirname "${CHICKEN_HOME}")")
+CHICKEN_PREFIX="$(dirname $(dirname ${CHICKEN_HOME}))"
+CHICKEN_REPOSITORY=$(${CSI} -p "(repository-path)")
+# chicken binary version
+BINARY_VERSION=$(basename "${CHICKEN_REPOSITORY}")
+
+# local copy of chicken files are kept here
+LOCAL_CHICKEN_PREFIX=$(realpath "${1}")
+
+# remember where we were before jumping directories
+OLDPWD=$(pwd)
+
+# create all the necessary directories
+mkdir -p "${LOCAL_CHICKEN_PREFIX}" && cd "$_" || exit 1
+mkdir -p bin lib/chicken share/chicken include/chicken
+
+# populate ./bin
+for file in ${CHICKEN_PREFIX}/bin/{chicken,chicken-bug,chicken-install,chicken-profile,chicken-status,chicken-uninstall,csi,csc,feathers}; do
+    [ -f "${file}" ] && cp "${file}" ./bin
+done
+
+# initialize empty alternative repository
+${CHICKEN_INSTALL} -init "./lib/chicken/${BINARY_VERSION}"
+
+# include files are essential
+cp -R "${CHICKEN_PREFIX}"/include/chicken/{chicken.h,chicken-config.h} ./include/chicken
+
+# populate ./share
+cp -R "${CHICKEN_HOME}/setup.defaults" ./share/chicken
+
+# create init file for the localenv
+# init file acts like .csirc for the localenv
+touch "${LOCAL_CHICKEN_PREFIX}/.init"
+
+# write activate file
+# Backslash escapes '$' and prevents expansion of the shell variables
+cat << EOF > "${LOCAL_CHICKEN_PREFIX}/bin/activate"
+export OLDPATH="\${PATH}"
+export PATH="${LOCAL_CHICKEN_PREFIX}/bin:\${PATH}"
+
+export OLDPS1="\${PS1}"
+export PS1="($1)\${PS1}"
+
+export CHICKEN_PREFIX="${LOCAL_CHICKEN_PREFIX}"
+export CHICKEN_HOME="${LOCAL_CHICKEN_PREFIX}/share/chicken"
+export CHICKEN_REPOSITORY="${LOCAL_CHICKEN_PREFIX}/lib/chicken/${BINARY_VERSION}"
+export LOCAL_CSIRC="${LOCAL_CHICKEN_PREFIX}/.init"
+
+# register a feature identifier 'localenv'
+# this is required to override commands in the .csirc file
+alias csi="csi -D localenv"
+
+# deactivation function
+deactivate()
+{
+    export PATH="\${OLDPATH}"
+    export PS1="\${OLDPS1}"
+    unset OLDPATH
+    unset OLDPS1
+    unset CHICKEN_PREFIX
+    unset CHICKEN_HOME
+    unset CHICKEN_REPOSITORY
+    unset LOCAL_CSIRC
+    unalias csi
+    unset -f deactivate
+}
+
+EOF
+
+cd "${OLDPWD}"
